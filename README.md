@@ -3,6 +3,8 @@
 A small utility to quickly trim and compress a video using ffmpeg.  
 It's made in Rust, using `egui` for the user interface.
 
+![inxVideoUtil](https://github.com/inxanedev/inxVideoUtil/blob/master/assets/inxVideoUtils.png?raw=true)
+
 # how to use
 First, make sure to download `ffmpeg` and have it available in your system path.
 
