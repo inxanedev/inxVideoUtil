@@ -1,6 +1,6 @@
 use std::process;
 
-use eframe::egui::{self, Vec2};
+use eframe::egui::{self, Pos2, Rounding, Vec2};
 use egui_video::Player;
 
 use crate::{args::Args, ffmpeg};
@@ -11,7 +11,11 @@ pub struct InxVideoUtilApp {
     audio_device: egui_video::AudioDevice,
     start: i64,
     end: i64,
-    crf: u32
+    crf: u32,
+    cropping: bool,
+    rect_color: egui::Color32,
+    rect_start: Option<egui::Pos2>,
+    rect_end: Option<egui::Pos2>
 }
 
 impl InxVideoUtilApp {
@@ -20,9 +24,12 @@ impl InxVideoUtilApp {
             args,
             player: None,
             audio_device: egui_video::AudioDevice::new().expect("Failed to create AudioDevice"),
-            start: 0, end: 0, crf: 30
+            start: 0, end: 0, crf: 30, cropping: false,
+            rect_color: egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100),
+            rect_start: None,
+            rect_end: None
         }
-    } 
+    }
 }
 
 impl eframe::App for InxVideoUtilApp {
@@ -48,10 +55,49 @@ impl eframe::App for InxVideoUtilApp {
 
             let width = orig_width * scale;
             let height = orig_height * scale;
-
+            
+            let player_pos = ui.next_widget_position();
             self.player.as_mut().unwrap().ui(ui, Vec2::new(width, height));
+
+            ui.input(|i| {
+                if i.pointer.any_click() && self.cropping {
+                    let pos = i.pointer.interact_pos().unwrap();
+                    if !(
+                        pos.x >= player_pos.x && pos.x <= player_pos.x + width &&
+                        pos.y >= player_pos.y && pos.y <= player_pos.y + height) {
+                            return;
+                        }
+                    if self.rect_start.is_none() {
+                        self.rect_start = Some(pos);
+                    } else if self.rect_end.is_none() {
+                        if pos.x >= self.rect_start.unwrap().x && pos.y >= self.rect_start.unwrap().y {
+                            self.rect_end = Some(pos);
+                            self.cropping = false;
+                        }
+                    }
+                }
+            });
+
+            if self.rect_start.is_some() && self.rect_end.is_some() {
+                let painter = ui.painter();
+                let rect = egui::Rect::from_min_size(
+                    self.rect_start.unwrap(),
+                    egui::vec2(
+                        self.rect_end.unwrap().x - self.rect_start.unwrap().x,
+                        self.rect_end.unwrap().y - self.rect_start.unwrap().y
+                    )
+                );
+                let shape = egui::Shape::rect_filled(
+                    rect, Rounding::ZERO, self.rect_color
+                );
+                painter.add(shape);
+            }
             
             ui.horizontal(|ui| {
+                if !self.cropping && ui.button("Crop").clicked() {
+                    self.cropping = true;
+                }
+                if self.cropping { return };
                 if ui.button("Set start").clicked() {
                     self.start = self.player.as_ref().unwrap().elapsed_ms()
                 }
@@ -59,7 +105,26 @@ impl eframe::App for InxVideoUtilApp {
                     self.end = self.player.as_ref().unwrap().elapsed_ms();
                 }
                 if ui.button("Trim and compress").clicked() {
-                    ffmpeg::trim_and_compress(&self.args.filename, self.start, self.end, self.crf);
+                    let mut video_rect_start = None;
+                    let crop_rect_size = if let Some(rect_end) = self.rect_end {
+                        video_rect_start = Some(Pos2::new(
+                            (self.rect_start.unwrap().x - player_pos.x) / scale,
+                            (self.rect_start.unwrap().y - player_pos.y) / scale
+                        ));
+                        Some(egui::vec2(
+                            (rect_end.x - self.rect_start.unwrap().x) / scale,
+                            (rect_end.y - self.rect_start.unwrap().y) / scale
+                        ))
+                    } else {None};
+
+                    ffmpeg::trim_and_compress(
+                        &self.args.filename,
+                        self.start,
+                        self.end,
+                        self.crf,
+                        video_rect_start,
+                        crop_rect_size
+                    );
                     process::exit(0);
                 }
             });
