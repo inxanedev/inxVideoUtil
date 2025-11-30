@@ -15,7 +15,9 @@ pub struct InxVideoUtilApp {
     cropping: bool,
     rect_color: egui::Color32,
     rect_start: Option<egui::Pos2>,
-    rect_end: Option<egui::Pos2>
+    rect_end: Option<egui::Pos2>,
+    uploading: bool,
+    password: String
 }
 
 impl InxVideoUtilApp {
@@ -27,7 +29,9 @@ impl InxVideoUtilApp {
             start: 0, end: 0, crf: 30, cropping: false,
             rect_color: egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100),
             rect_start: None,
-            rect_end: None
+            rect_end: None,
+            uploading: false,
+            password: String::new()
         }
     }
 }
@@ -45,6 +49,8 @@ impl eframe::App for InxVideoUtilApp {
                 self.player.as_mut().unwrap().start();
                 self.end = self.player.as_ref().unwrap().duration_ms;
             }
+
+            // scaling the video so it fits in the window
             let orig_width = self.player.as_ref().unwrap().size.x;
             let orig_height = self.player.as_ref().unwrap().size.y;
 
@@ -62,14 +68,15 @@ impl eframe::App for InxVideoUtilApp {
             ui.input(|i| {
                 if i.pointer.any_click() && self.cropping {
                     let pos = i.pointer.interact_pos().unwrap();
-                    if !(
+                    if !( // check if the click was inside the video player
                         pos.x >= player_pos.x && pos.x <= player_pos.x + width &&
                         pos.y >= player_pos.y && pos.y <= player_pos.y + height) {
                             return;
                         }
-                    if self.rect_start.is_none() {
+                    if self.rect_start.is_none() { // cropping - if it's the first click
                         self.rect_start = Some(pos);
-                    } else if self.rect_end.is_none() {
+                    } else if self.rect_end.is_none() { // cropping - if it's the second click
+                        // if the second click was lower and to the right, to make a rect
                         if pos.x >= self.rect_start.unwrap().x && pos.y >= self.rect_start.unwrap().y {
                             self.rect_end = Some(pos);
                             self.cropping = false;
@@ -78,12 +85,13 @@ impl eframe::App for InxVideoUtilApp {
                 }
             });
 
+            // if we have a valid crop selection
             if self.rect_start.is_some() && self.rect_end.is_some() {
                 let painter = ui.painter();
                 let rect = egui::Rect::from_min_size(
                     self.rect_start.unwrap(),
                     egui::vec2(
-                        self.rect_end.unwrap().x - self.rect_start.unwrap().x,
+                        self.rect_end.unwrap().x - self.rect_start.unwrap().x, // calculating the size of the rect here. rects are pos + size not pos + pos
                         self.rect_end.unwrap().y - self.rect_start.unwrap().y
                     )
                 );
@@ -107,6 +115,7 @@ impl eframe::App for InxVideoUtilApp {
                 if ui.button("Trim and compress").clicked() {
                     let mut video_rect_start = None;
                     let crop_rect_size = if let Some(rect_end) = self.rect_end {
+                        // converting from window-space coords to video-coords
                         video_rect_start = Some(Pos2::new(
                             (self.rect_start.unwrap().x - player_pos.x) / scale,
                             (self.rect_start.unwrap().y - player_pos.y) / scale
@@ -117,18 +126,32 @@ impl eframe::App for InxVideoUtilApp {
                         ))
                     } else {None};
 
+                    let password: Option<&String> = match self.uploading {
+                        true => Some(&self.password),
+                        false => None
+                    };
+
                     ffmpeg::trim_and_compress(
                         &self.args.filename,
                         self.start,
                         self.end,
                         self.crf,
                         video_rect_start,
-                        crop_rect_size
+                        crop_rect_size,
+                        self.uploading,
+                        password
                     );
                     process::exit(0);
                 }
+                ui.checkbox(&mut self.uploading, "Upload to inxane.dev");
             });
-
+            if self.uploading {
+                ui.horizontal(|ui| {
+                    ui.label("Password for uploading: ");
+                    ui.text_edit_singleline(&mut self.password);
+                });
+                
+            }
             ui.label(format!("Start pos: {}", self.start));
             ui.label(format!("End pos: {}", self.end));
             ui.add(egui::Slider::new(&mut self.crf, 0..=30).text("CRF"));
